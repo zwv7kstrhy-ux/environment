@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Climate Inequality Map — Visualizing Climate Inequality</title>
+
+<!-- Leaflet CSS (CDN) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+ integrity="sha256-Vz8f6XQk0C7k3h9q6k0wZk0zR2s0QwY5kXj9v5s0wYQ=" crossorigin=""/>
+
+<style>
+  :root{
+    --accent:#147d6b;
+    --muted:#506070;
+    --bg:linear-gradient(180deg,#f6fbfd,#f0f8ff);
+    --card:#ffffff;
+    --radius:12px;
+    --maxw:1200px;
+  }
+  *{box-sizing:border-box}
+  html,body,#app{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:#073033;background:var(--bg)}
+  #app{display:flex;flex-direction:column;align-items:stretch}
+
+  /* Header */
+  header{
+    display:flex;align-items:center;gap:16px;padding:18px 22px;
+    background:rgba(255,255,255,0.7);backdrop-filter:blur(6px);box-shadow:0 6px 18px rgba(2,18,19,0.04);
+    position:sticky;top:0;z-index:100;
+  }
+  header h1{margin:0;font-size:18px;letter-spacing:0.2px;font-weight:700}
+  header p{margin:0;color:var(--muted);font-size:13px}
+
+  /* Layout */
+  .layout{display:flex;flex:1;gap:20px;padding:18px;max-width:var(--maxw);margin:0 auto;width:100%}
+  .left{width:360px;min-width:260px;display:flex;flex-direction:column;gap:12px}
+  .main{flex:1;display:flex;flex-direction:column;gap:12px}
+
+  .card{background:var(--card);border-radius:var(--radius);padding:14px;box-shadow:0 8px 28px rgba(4,28,30,0.04)}
+  .muted{color:var(--muted);font-size:13px}
+  label{display:block;font-weight:600;margin-bottom:6px;color:#073033}
+
+  /* Map */
+  #map{height:62vh;border-radius:12px;overflow:hidden}
+  .legend{padding:8px;border-radius:8px;background:rgba(255,255,255,0.9);box-shadow:0 6px 16px rgba(0,0,0,0.06)}
+  .legend .title{font-weight:700;margin-bottom:6px}
+  .legend .scale{display:flex;gap:6px;align-items:center}
+
+  /* Info popup panel */
+  .info-panel{min-height:90px}
+  .country-title{font-size:18px;font-weight:800;margin-bottom:6px}
+  .stat-row{display:flex;justify-content:space-between;padding:6px 0;border-top:1px dashed #eef6f4}
+  .stat-row:first-of-type{border-top:none}
+  .big-number{font-weight:800;color:var(--accent);}
+
+  /* Bottom content */
+  .extras{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .extras h3{margin:0 0 6px 0;font-size:16px}
+  .btn{display:inline-block;background:var(--accent);color:white;padding:8px 12px;border-radius:10px;text-decoration:none;font-weight:700}
+  .link{color:var(--accent);text-decoration:none}
+
+  /* Responsive */
+  @media(max-width:980px){
+    .layout{flex-direction:column;padding:12px}
+    .left{width:100%;}
+    #map{height:56vh}
+    .extras{grid-template-columns:1fr}
+  }
+  /* small helper */
+  small.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>기후 불평등을 시각화하다</h1>
+      <p class="muted">Visualizing Climate Inequality — 누구에게 피해가 집중되는가?</p>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- LEFT PANEL: CONTROLS & INFO -->
+    <aside class="left">
+      <div class="card">
+        <label for="metric">데이터 필터 (지표 선택)</label>
+        <select id="metric" style="width:100%;padding:10px;border-radius:8px;border:1px solid #e8f1ef">
+          <option value="co2">탄소 배출량 (CO₂, MtCO₂)</option>
+          <option value="vulnerability">기후 취약성 지수 (취약↑)</option>
+          <option value="impact">기후 피해율 (재해 피해 / GDP %)</option>
+          <option value="poverty">빈곤율 (% 인구, 극빈)</option>
+          <option value="gdp">1인당 GDP (USD)</option>
+        </select>
+
+        <div style="margin-top:12px">
+          <label for="year">연도 (샘플 데이터)</label>
+          <input id="year" type="number" value="2019" min="1990" max="2023" style="width:100%;padding:10px;border-radius:8px;border:1px solid #e8f1ef">
+        </div>
+
+        <div style="margin-top:12px">
+          <label for="search">국가 검색</label>
+          <input id="search" placeholder="예: Bangladesh" style="width:100%;padding:10px;border-radius:8px;border:1px solid #e8f1ef">
+        </div>
+
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button id="btnApply" class="btn" style="flex:1">필터 적용</button>
+          <button id="btnReset" style="flex:1;border-radius:10px;border:1px solid #e6f4f1;background:white">초기화</button>
+        </div>
+
+        <div style="margin-top:12px" class="muted small">※ 이 페이지는 데모 샘플 데이터로 작동합니다. 실제 국제 데이터(UN, World Bank, ND-GAIN 등)로 교체 가능.</div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <div class="legend">
+          <div class="title">범례 (선택된 지표에 따라 변경)</div>
+          <div id="legendScale" class="scale muted">로딩 중...</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <div class="info-panel">
+          <div class="country-title" id="countryName">세계 개요</div>
+          <div class="muted">지도에서 국가를 클릭하면 상세 정보를 확인할 수 있습니다.</div>
+          <div id="countryStats" style="margin-top:10px"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div><strong>데이터 출처(예시)</strong><div class="muted" style="font-size:13px">NASA, World Bank, ND-GAIN, EM-DAT (샘플)</div></div>
+          <a class="link" href="#" onclick="alert('데이터 소스 교체 방법은 앱 하단 설명을 확인하세요.')">데이터 교체</a>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- MAIN: MAP + EXTRA SECTIONS -->
+    <main class="main">
+      <div id="map" class="card"></div>
+
+      <!-- Extras -->
+      <div class="extras">
+        <section class="card">
+          <h3>기후 정의란 무엇인가?</h3>
+          <p class="muted">기후정의(Climate Justice)는 온실가스 배출 책임과 기후 피해 부담이 불공정하게 분배되는 상황을 바로잡으려는 개념입니다. 이 섹션은 간단한 인포그래픽과 핵심 문장으로 요약합니다.</p>
+          <div style="margin-top:10px">
+            <strong>핵심:</strong>
+            <ul class="muted">
+              <li>책임은 선진국에 더 크다.</li>
+              <li>피해는 개발도상국·취약계층에 집중된다.</li>
+              <li>공정한 협력과 자원 이전이 필요하다.</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>국제 협력 사례</h3>
+          <p class="muted">파리협정, 녹색기후기금(GCF), SDGs(목표13) 등은 기후 문제에 대응하기 위한 국제적 틀입니다.</p>
+          <div style="margin-top:8px">
+            <a class="btn" href="#" onclick="alert('파리협정, GCF 등 사례 페이지는 추후 연결됩니다')">더 보기</a>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>당신의 역할은?</h3>
+          <p class="muted">일상 속 작은 실천이 국제적 불평등 완화에 기여합니다. 아래 버튼을 눌러 SNS로 챌린지를 공유해 보세요.</p>
+          <div style="margin-top:10px;display:flex;gap:8px">
+            <button class="btn" onclick="shareChallenge()">#ClimateForAll 챌린지 공유</button>
+            <a class="link" href="#" onclick="alert('챌린지 참여 가이드 (사진 업로드 등)는 곧 제공됩니다.')">참여 가이드</a>
+          </div>
+        </section>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>설명 및 활용 팁</h3>
+        <p class="muted">이 웹앱은 시범용 예시 데이터를 사용합니다. 실제 데이터(UN, World Bank, ND-GAIN 등)를 API로 연결하면 정책 제안·연구·교육용 도구로 활용할 수 있습니다.</p>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- Leaflet JS (CDN) -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+ integrity="sha256-o9N1jvQmK1k2h6p6x5wjTqv8M0CqC1i4R9v+0u0r0eI=" crossorigin=""></script>
+<!-- chroma.js for color scales -->
+<script src="https://unpkg.com/chroma-js@2.4.2/chroma.min.js"></script>
+
+<script>
+/*
+  Climate Inequality Map - demo app
+  - Uses external GeoJSON for world countries (GitHub raw)
+  - Uses inline sample data (replaceable with real datasets)
+  - Metric options: co2, vulnerability, impact, poverty, gdp
+*/
+
+/* ---------------- Sample dataset (partial/example)
+   In real project replace with API results (World Bank, ND-GAIN, EM-DAT, Global Carbon)
+   Format: keyed by ISO_A3 code (3-letter)
+*/
+const sampleData = {
+  "USA": {co2: 5140, vulnerability: 0.35, impact: 0.2, poverty: 10, gdp: 65394, country:"United States", tempRise:1.2},
+  "CHN": {co2: 10065, vulnerability: 0.40, impact: 0.3, poverty: 3, gdp: 10484, country:"China", tempRise:1.1},
+  "IND": {co2: 2650, vulnerability: 0.65, impact: 1.5, poverty: 21, gdp: 2100, country:"India", tempRise:1.3},
+  "BGD": {co2: 40, vulnerability: 0.85, impact: 5.0, poverty: 24, gdp: 1700, country:"Bangladesh", tempRise:1.8},
+  "NGA": {co2: 130, vulnerability: 0.72, impact: 2.1, poverty: 40, gdp: 2300, country:"Nigeria", tempRise:1.5},
+  "AUS": {co2: 410, vulnerability: 0.3, impact: 0.1, poverty: 13, gdp: 53800, country:"Australia", tempRise:1.4},
+  "BRA": {co2: 480, vulnerability: 0.6, impact: 0.9, poverty: 21, gdp: 8900, country:"Brazil", tempRise:1.2},
+  "PAK": {co2: 140, vulnerability: 0.82, impact: 3.6, poverty: 24, gdp: 1200, country:"Pakistan", tempRise:1.9},
+  "ETH": {co2: 10, vulnerability: 0.78, impact: 2.5, poverty: 30, gdp: 850, country:"Ethiopia", tempRise:1.6},
+  "GBR": {co2: 360, vulnerability: 0.32, impact: 0.15, poverty: 12, gdp: 42300, country:"United Kingdom", tempRise:1.0}
+  // ... add more or replace with real data
+};
+
+/* Utility: fetch GeoJSON for world countries (public repo)
+   Note: this uses raw GitHub URL — require internet when opening file
+*/
+const geojsonURL = "https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json";
+
+/* Global state */
+let map, geoLayer;
+let currentMetric = document.getElementById('metric').value;
+let currentYear = document.getElementById('year').value;
+
+/* Initialize map */
+function initMap(){
+  map = L.map('map', {zoomControl:true, minZoom:2}).setView([20,0], 2);
+
+  // Add lightweight basemap (OpenStreetMap)
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  // Info control on top-right
+  const info = L.control({position:'topright'});
+  info.onAdd = function(){
+    const div = L.DomUtil.create('div','legend');
+    div.innerHTML = '<div style="font-weight:700;margin-bottom:6px">선택된 지표</div><div id="mapMetric" class="muted">로딩...</div>';
+    return div;
+  };
+  info.addTo(map);
+
+  loadGeoJSON();
+}
+
+/* Load geojson and style */
+function loadGeoJSON(){
+  fetch(geojsonURL).then(res=>res.json()).then(geojson=>{
+    // remove previous
+    if(geoLayer) geoLayer.remove();
+
+    geoLayer = L.geoJson(geojson, {
+      style: styleFeature,
+      onEachFeature: onEachFeature
+    }).addTo(map);
+
+    updateLegend();
+  }).catch(err=>{
+    console.error("GeoJSON load failed:", err);
+    document.getElementById('map').innerHTML = '<div style="padding:20px;color:#933">지도 로드 실패 - 인터넷 연결을 확인하세요.</div>';
+  });
+}
+
+/* Style function uses currentMetric to color countries */
+function styleFeature(feature){
+  const iso = feature.properties.iso_a3 || feature.id || feature.properties.ISO_A3 || feature.properties.iso3;
+  const val = (iso && sampleData[iso]) ? sampleData[iso][currentMetric] : null;
+  const col = getColor(val);
+  return {
+    fillColor: col || '#eee',
+    fillOpacity: val!=null?0.8:0.35,
+    weight: 0.6,
+    color: '#cfeeea'
+  };
+}
+
+/* Color scale: use chroma to create color scale per metric */
+function getColor(value){
+  if(value==null || value===undefined) return '#eee';
+  let scale;
+  switch(currentMetric){
+    case 'co2':
+      scale = chroma.scale(['#fde0d9','#f768a1','#c51b8a']).domain([0, 10000]);
+      return scale(Math.min(value,10000)).hex();
+    case 'vulnerability':
+      scale = chroma.scale(['#eff8ff','#7fc7ff','#0050b3']).domain([0,1]);
+      return scale(value).hex();
+    case 'impact':
+      scale = chroma.scale(['#fff8e6','#ffb480','#cc3300']).domain([0,6]);
+      return scale(Math.min(value,6)).hex();
+    case 'poverty':
+      scale = chroma.scale(['#f0fff4','#7fd3a6','#006b3c']).domain([0,60]);
+      return scale(Math.min(value,60)).hex();
+    case 'gdp':
+      scale = chroma.scale(['#fff7f0','#ffb4a2','#7f0000']).domain([0,70000]);
+      return scale(Math.min(value,70000)).hex();
+    default:
+      return '#ddd';
+  }
+}
+
+/* onEachFeature: interactions */
+function onEachFeature(feature, layer){
+  layer.on({
+    click: function(e){
+      const iso = feature.properties.iso_a3 || feature.id || feature.properties.ISO_A3 || feature.properties.iso3;
+      showCountryInfo(iso, feature, e);
+    },
+    mouseover: function(e){
+      e.target.setStyle({weight:1.6, color:'#024'});
+      e.target.bringToFront();
+    },
+    mouseout: function(e){
+      geoLayer.resetStyle(e.target);
+    }
+  });
+}
+
+/* Show country info in side panel (and popup) */
+function showCountryInfo(iso, feature, e){
+  const data = sampleData[iso];
+  const name = data ? data.country : (feature.properties.name || feature.properties.NAME);
+  const statsDiv = document.getElementById('countryStats');
+  statsDiv.innerHTML = '';
+  const html = [];
+  html.push(`<div style="font-weight:700">${name}</div>`);
+  if(data){
+    html.push(`<div class="stat-row"><div>온도 상승</div><div class="big-number">${data.tempRise ?? 'N/A'}°C</div></div>`);
+    html.push(`<div class="stat-row"><div>탄소 배출 (MtCO₂)</div><div class="big-number">${data.co2 ?? 'N/A'}</div></div>`);
+    html.push(`<div class="stat-row"><div>기후 피해 (GDP%)</div><div class="big-number">${data.impact ?? 'N/A'}</div></div>`);
+    html.push(`<div class="stat-row"><div>취약성 지수</div><div class="big-number">${data.vulnerability ?? 'N/A'}</div></div>`);
+    html.push(`<div class="stat-row"><div>빈곤율 (%)</div><div class="big-number">${data.poverty ?? 'N/A'}</div></div>`);
+    html.push(`<div style="margin-top:8px"><small class="muted">참고: 데이터는 예시값입니다. 실제 연구/정책용 데이터로 대체하세요.</small></div>`);
+  } else {
+    html.push(`<div class="muted">데이터 없음 (샘플 데이터에 포함되지 않음)</div>`);
+  }
+  statsDiv.innerHTML = html.join('');
+  document.getElementById('countryName').textContent = name;
+
+  // show popup on map
+  if(e && e.latlng){
+    L.popup({maxWidth:320})
+      .setLatLng(e.latlng)
+      .setContent(`<strong>${name}</strong><br/>온도 상승: ${data?.tempRise ?? 'N/A'}°C<br/>탄소 배출: ${data?.co2 ?? 'N/A'} MtCO₂`)
+      .openOn(map);
+  }
+}
+
+/* Update legend and metric label */
+function updateLegend(){
+  document.getElementById('mapMetric').textContent = (() => {
+    switch(currentMetric){
+      case 'co2': return '탄소 배출량 (MtCO₂)';
+      case 'vulnerability': return '기후 취약성 지수 (높을수록 취약)';
+      case 'impact': return '재해 피해율 (GDP%)';
+      case 'poverty': return '빈곤율 (%)';
+      case 'gdp': return '1인당 GDP (USD)';
+      default: return '';
+    }
+  })();
+
+  // Create a simple legend gradient sample
+  const legend = document.getElementById('legendScale');
+  let domain, colors, steps=5, labels=[];
+  switch(currentMetric){
+    case 'co2': domain=[0,10000]; colors=['#fde0d9','#f768a1','#c51b8a']; break;
+    case 'vulnerability': domain=[0,1]; colors=['#eff8ff','#7fc7ff','#0050b3']; break;
+    case 'impact': domain=[0,6]; colors=['#fff8e6','#ffb480','#cc3300']; break;
+    case 'poverty': domain=[0,60]; colors=['#f0fff4','#7fd3a6','#006b3c']; break;
+    case 'gdp': domain=[0,70000]; colors=['#fff7f0','#ffb4a2','#7f0000']; break;
+    default: domain=[0,1]; colors=['#eee','#999']; break;
+  }
+  const scale = chroma.scale(colors).domain([domain[0],domain[1]]);
+  legend.innerHTML = '';
+  for(let i=0;i<steps;i++){
+    const v = domain[0] + (domain[1]-domain[0])*(i/(steps-1));
+    const col = scale(v).hex();
+    const node = document.createElement('div');
+    node.style.display='flex';node.style.alignItems='center';node.style.gap='8px';node.style.marginBottom='6px';
+    node.innerHTML = `<div style="width:34px;height:12px;border-radius:4px;background:${col};border:1px solid rgba(0,0,0,0.05)"></div><div style="font-size:13px;color:var(--muted)">${Math.round(v)}</div>`;
+    legend.appendChild(node);
+  }
+}
+
+/* Repaint geoLayer */
+function repaintLayer(){
+  currentMetric = document.getElementById('metric').value;
+  currentYear = document.getElementById('year').value;
+  updateLegend();
+  if(geoLayer){
+    geoLayer.eachLayer(layer=>{
+      geoLayer.resetStyle(layer);
+    });
+  }
+}
+
+/* Search country by name */
+function searchCountry(name){
+  name = name.trim().toLowerCase();
+  if(!name) return;
+  geoLayer.eachLayer(layer=>{
+    const props = layer.feature.properties;
+    const cname = (props.name || props.NAME || props.NAME_LONG || '').toLowerCase();
+    if(cname.indexOf(name) !== -1){
+      map.fitBounds(layer.getBounds(), {maxZoom:5});
+      // highlight
+      layer.fire('click', {latlng: layer.getBounds().getCenter()});
+    }
+  });
+}
+
+/* Share challenge (simple) */
+function shareChallenge(){
+  const text = encodeURIComponent("저는 #ClimateForAll 챌린지에 참여합니다. 기후 불평등 해소에 동참하세요!");
+  const url = encodeURIComponent(window.location.href);
+  // open twitter share
+  const shareUrl = `https://twitter.com/intent/tweet?text=${text}&url=${url}`;
+  window.open(shareUrl,'_blank');
+}
+
+/* Event listeners */
+document.getElementById('btnApply').addEventListener('click', ()=>{
+  repaintLayer();
+});
+document.getElementById('btnReset').addEventListener('click', ()=>{
+  document.getElementById('metric').value='co2';
+  document.getElementById('year').value='2019';
+  document.getElementById('search').value='';
+  repaintLayer();
+});
+document.getElementById('search').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter') searchCountry(e.target.value);
+});
+
+/* Initialize */
+initMap();
+updateLegend();
+
+</script>
+</body>
+</html>
